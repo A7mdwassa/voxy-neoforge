@@ -475,6 +475,14 @@ dependencies {
     }
     //implementation 'org.rocksdb:rocksdbjni:8.10.0'
     //implementation 'redis.clients:jedis:5.1.0'
+
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
 }
 
 if (!isInGHA) {

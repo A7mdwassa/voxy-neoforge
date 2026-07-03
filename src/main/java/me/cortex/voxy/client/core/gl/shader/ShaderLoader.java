@@ -1,62 +1,68 @@
 package me.cortex.voxy.client.core.gl.shader;
 
-
-import net.caffeinemc.mods.sodium.client.gl.shader.ShaderConstants;
-import net.caffeinemc.mods.sodium.client.gl.shader.ShaderParser;
 import org.apache.commons.io.IOUtils;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.StringReader;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * NeoForge-compatible shader loader for Voxy.
  *
- * On Fabric, Sodium's ShaderLoader.getShaderSource() uses a flat classloader that can
- * access all mod resources. On NeoForge, each mod has an isolated classloader, so
- * Sodium's classloader cannot access Voxy's shader resources.
- *
- * This loader bypasses Sodium's resource loading and uses Voxy's own classloader.
- *
- * Upstream reference: https://github.com/MCRcortex/voxy
- * See: src/main/java/me/cortex/voxy/client/core/gl/shader/ShaderLoader.java
+ * Newer Sodium builds changed internal shader parsing substantially, so Voxy now
+ * resolves its own #import graph and leaves runtime define injection to Shader.Builder.
  */
 public class ShaderLoader {
     private static final Pattern IMPORT_PATTERN = Pattern.compile("#import <(?<namespace>.*):(?<path>.*)>");
 
-    /**
-     * Parse and load a shader, matching upstream Voxy behavior.
-     *
-     * Upstream code:
-     *   return "#version 460 core\n" + ShaderParser.parseShader(
-     *       "\n#import <" + id + ">\n//beans", ShaderConstants.builder().build()
-     *   ).src().replaceAll("\r\n", "\n").replaceFirst("\n#version .+\n", "\n");
-     *
-     * The key is the leading "\n" before #import - this ensures the regex
-     * "\n#version .+\n" can match the #version directive in the loaded shader.
-     */
     public static String parse(String id) {
-        // Load shader source using Voxy's classloader (NeoForge classloader isolation fix)
         String shaderSource = getShaderSource(id);
+        return parseShaderSource(shaderSource, ShaderLoader::getShaderSource);
+    }
 
-        // Process any nested #import directives recursively
-        shaderSource = processImports(shaderSource);
+    static String parseShaderSource(String source, Function<String, String> importResolver) {
+        List<String> lines = new ArrayList<>();
+        parseInto(lines, source, importResolver);
+        return "#version 460 core\n" + String.join("\n", lines);
+    }
 
-        // Match upstream format: "\n" + content + "\n//beans"
-        // The leading \n is critical for the regex to work
-        String processed = "\n" + shaderSource + "\n//beans";
+    private static void parseInto(List<String> output, String source, Function<String, String> importResolver) {
+        for (String line : toLines(source)) {
+            String trimmed = line.trim();
 
-        // Apply Sodium's shader constants processing (handles #define etc.)
-        processed = ShaderParser.parseShader(processed, ShaderConstants.builder().build());
+            if (trimmed.startsWith("#version")) {
+                continue;
+            }
 
-        // Normalize line endings and strip original #version (upstream behavior)
-        processed = processed.replaceAll("\r\n", "\n");
-        processed = processed.replaceFirst("\n#version .+\n", "\n");
+            if (trimmed.startsWith("#import")) {
+                Matcher matcher = IMPORT_PATTERN.matcher(trimmed);
+                if (!matcher.matches()) {
+                    throw new IllegalArgumentException("Unknown import directive: " + line);
+                }
 
-        // Prepend our target GLSL version
-        return "#version 460 core\n" + processed;
+                String importId = matcher.group("namespace") + ":" + matcher.group("path");
+                String importedSource = importResolver.apply(importId);
+                if (importedSource == null) {
+                    throw new RuntimeException("Shader import not found: " + importId);
+                }
+                parseInto(output, importedSource, importResolver);
+                continue;
+            }
+
+            output.add(line);
+        }
+    }
+
+    private static List<String> toLines(String source) {
+        return new BufferedReader(new StringReader(source)).lines().toList();
     }
 
     /**
@@ -80,28 +86,38 @@ public class ShaderLoader {
         }
     }
 
-    /**
-     * Process #import directives recursively, loading from Voxy's resources.
-     */
-    private static String processImports(String source) {
-        StringBuilder result = new StringBuilder();
-        for (String line : source.split("\n")) {
-            if (line.trim().startsWith("#import")) {
-                Matcher matcher = IMPORT_PATTERN.matcher(line.trim());
-                if (matcher.matches()) {
-                    String namespace = matcher.group("namespace");
-                    String path = matcher.group("path");
-                    String importId = namespace + ":" + path;
-                    String importedSource = getShaderSource(importId);
-                    result.append(processImports(importedSource));
-                } else {
-                    result.append(line);
-                }
-            } else {
-                result.append(line);
-            }
-            result.append("\n");
+    // Retained for compatibility tests that lock down the previous investigation.
+    static String extractShaderSource(Object parsedShader) {
+        if (parsedShader instanceof String shaderSource) {
+            return shaderSource;
         }
-        return result.toString();
+
+        for (String methodName : new String[]{"src", "source", "getSource"}) {
+            String extracted = tryExtractShaderSource(parsedShader, methodName);
+            if (extracted != null) {
+                return extracted;
+            }
+        }
+
+        throw new IllegalArgumentException(
+                "Unsupported ShaderParser return type: " + (parsedShader == null ? "null" : parsedShader.getClass().getName())
+        );
+    }
+
+    private static String tryExtractShaderSource(Object parsedShader, String methodName) {
+        if (parsedShader == null) {
+            return null;
+        }
+
+        try {
+            Method method = parsedShader.getClass().getMethod(methodName);
+            if (method.getReturnType() == String.class) {
+                return (String) method.invoke(parsedShader);
+            }
+        } catch (ReflectiveOperationException ignored) {
+            // Try the next known accessor name.
+        }
+
+        return null;
     }
 }
