@@ -53,4 +53,13 @@ class IrisIntegrationConfigurationTest {
         assertTrue(patch.contains(".equalsIgnoreCase(\"true\")"));
         assertFalse(Boolean.getBoolean("voxy.impersonateDHShader"));
     }
+
+    @Test
+    void irisViewportSetupInjectionIsOptional() throws Exception {
+        String mixin = Files.readString(ROOT.resolve("src/main/java/me/cortex/voxy/client/mixin/iris/MixinIrisRenderingPipeline.java"));
+
+        assertTrue(mixin.contains("voxy$injectViewportSetup"));
+        assertTrue(mixin.contains("method = \"beginLevelRendering\""));
+        assertTrue(mixin.contains("require = 0"));
+    }
 }
