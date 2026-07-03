@@ -30,6 +30,7 @@ class IrisIntegrationConfigurationTest {
         assertTrue(mixins.contains("\"iris.MixinIrisRenderingPipeline\""));
         assertTrue(mixins.contains("\"iris.MixinIrisSamplers\""));
         assertTrue(mixins.contains("\"iris.MixinMatrixUniforms\""));
+        assertTrue(mixins.contains("\"iris.MixinPackRenderTargetDirectives\""));
         assertTrue(mixins.contains("\"iris.MixinProgramSet\""));
         assertTrue(mixins.contains("\"iris.MixinShaderPackSourceNames\""));
         assertTrue(mixins.contains("\"iris.MixinStandardMacros\""));
